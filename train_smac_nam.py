@@ -44,7 +44,7 @@ class Args:
     """the number of opponent policies to sample from"""
     num_envs: int = 2
     """the number of parallel game environments"""
-    num_eval_envs: int = 1
+    num_eval_envs: int = 4
     """the number of parallel game environments for evaluation"""
     num_eval_episodes: int = 10
     """the number of episodes to run for evaluation"""
@@ -110,7 +110,7 @@ def make_eval_env(env_id, rank):
 def evaluate(agent, eval_envs, args):
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
-    obs, _, available_actions = eval_envs.reset()
+    eval_obs, _, eval_available_actions = eval_envs.reset()
 
     oppnt_hidden_states = torch.zeros((args.num_eval_envs, agent.num_opponents, 1, 64), dtype=torch.float32)
     oppnt_masks = torch.ones((args.num_eval_envs, agent.num_opponents, 1))
@@ -125,14 +125,14 @@ def evaluate(agent, eval_envs, args):
     episode = 0
     battles_won = 0
 
-    episode_rewards = []
-    one_episode_rewards = []
+    episode_returns = []
+    one_episode_returns = np.zeros((args.num_eval_envs, 1), dtype=np.float32)
 
     while True:
-        agent_obs = torch.from_numpy(obs[:, -1])
-        oppnt_obs = torch.from_numpy(obs[:, :-1])
-        agent_available_actions = torch.from_numpy(available_actions[:, -1])
-        oppnt_available_actions = torch.from_numpy(available_actions[:, :-1])
+        agent_obs = torch.from_numpy(eval_obs[:, -1])
+        oppnt_obs = torch.from_numpy(eval_obs[:, :-1])
+        agent_available_actions = torch.from_numpy(eval_available_actions[:, -1])
+        oppnt_available_actions = torch.from_numpy(eval_available_actions[:, :-1])
 
         oppnt_actions = []
         for id in range(args.num_eval_envs):
@@ -154,32 +154,33 @@ def evaluate(agent, eval_envs, args):
         actions = torch.cat((oppnt_actions, agent_actions.unsqueeze(1)), dim=1)
         actions = actions.argmax(-1)
 
-        obs, _, rewards, dones, infos, available_actions = envs.step(actions)
-        one_episode_rewards.append(rewards)
-        dones_env = np.all(dones, axis=1)
+        eval_obs, _, eval_rewards, eval_dones, eval_infos, eval_available_actions = eval_envs.step(actions)
+        eval_dones_env = np.all(eval_dones, axis=1)
 
-        agent_hidden_states[:, dones_env == True] = torch.zeros((agent.lstm.num_layers, (dones_env == True).sum(), agent.lstm.hidden_size), dtype=torch.float32).to(device)
-        agent_cell_states[:, dones_env == True] = torch.zeros((agent.lstm.num_layers, (dones_env == True).sum(), agent.lstm.hidden_size), dtype=torch.float32).to(device)
+        agent_hidden_states[:, eval_dones_env == True] = torch.zeros((agent.lstm.num_layers, (eval_dones_env == True).sum(), agent.lstm.hidden_size), dtype=torch.float32).to(device)
+        agent_cell_states[:, eval_dones_env == True] = torch.zeros((agent.lstm.num_layers, (eval_dones_env == True).sum(), agent.lstm.hidden_size), dtype=torch.float32).to(device)
 
-        oppnt_hidden_states[dones_env == True] = torch.zeros(((dones_env == True).sum(), agent.num_opponents, 1, 64), dtype=torch.float32).to(device)
+        oppnt_hidden_states[eval_dones_env == True] = torch.zeros(((eval_dones_env == True).sum(), agent.num_opponents, 1, 64), dtype=torch.float32).to(device)
         oppnt_masks = torch.ones((args.num_eval_envs, agent.num_opponents, 1), dtype=torch.float32)
-        oppnt_masks[dones_env == True] = torch.zeros(((dones_env == True).sum(), agent.num_opponents, 1), dtype=torch.float32)
+        oppnt_masks[eval_dones_env == True] = torch.zeros(((eval_dones_env == True).sum(), agent.num_opponents, 1), dtype=torch.float32)
 
         for i in range(args.num_eval_envs):
-            if dones_env[i]:
+            if eval_dones_env[i]:
                 episode += 1
-                episode_rewards.append(np.sum(one_episode_rewards, axis=0))
-                one_episode_rewards = []
-                if infos[i][0]['won']:
+                episode_returns.append(one_episode_returns[i])
+                one_episode_returns[i] = 0.0
+                if eval_infos[i][0]['won']:
                     battles_won += 1
+            else:
+                one_episode_returns[i] += eval_rewards[i, -1]
 
         if episode >= args.num_eval_episodes:
-            episode_rewards = np.array(episode_rewards)
-            avg_reward = episode_rewards.mean()
+            episode_returns = np.array(episode_returns)
+            avg_return = episode_returns.mean()
             win_rate = battles_won / episode
             break
 
-    return avg_reward, win_rate
+    return avg_return, win_rate
 
 
 if __name__ == "__main__":

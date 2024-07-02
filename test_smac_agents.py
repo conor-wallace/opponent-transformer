@@ -252,8 +252,8 @@ def baseline():
     episode = 0
     battles_won = 0
 
-    episode_rewards = []
-    one_episode_rewards = []
+    episode_returns = []
+    one_episode_returns = np.zeros((num_envs, 1), dtype=np.float32)
 
     while True:
         agent_obs = torch.from_numpy(obs[:, -1])
@@ -283,7 +283,6 @@ def baseline():
         actions = actions.argmax(-1)
 
         obs, share_obs, rewards, dones, infos, available_actions = env.step(actions)
-        one_episode_rewards.append(rewards)
         dones_env = np.all(dones, axis=1)
 
         agent_hidden_states[:, dones_env == True] = torch.zeros((agent.lstm.num_layers, (dones_env == True).sum(), agent.lstm.hidden_size), dtype=torch.float32).to(device)
@@ -296,16 +295,18 @@ def baseline():
         for i in range(num_envs):
             if dones_env[i]:
                 episode += 1
-                episode_rewards.append(np.sum(one_episode_rewards, axis=0))
-                one_episode_rewards = []
+                episode_returns.append(one_episode_returns[i])
+                one_episode_returns[i] = 0.0
                 if infos[i][0]['won']:
                     battles_won += 1
+            else:
+                one_episode_returns[i] += rewards[i, -1]
 
         if episode >= num_episodes:
-            episode_rewards = np.array(episode_rewards)
+            episode_returns = np.array(episode_returns)
             win_rate = battles_won / episode
             print("eval win rate is {}.".format(win_rate))
-            print("eval average cumulative reward is {}.".format(episode_rewards.mean()))
+            print("eval average cumulative reward is {}.".format(episode_returns.mean()))
             break
 
     # battles_won = []
