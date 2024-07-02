@@ -1,4 +1,5 @@
 import argparse
+import os
 import numpy as np
 import random
 import torch
@@ -201,7 +202,9 @@ def baseline():
         env = ShareDummyVecEnv(env_fns)
 
     model = PPONet(310, 15, 64)
-    save_dict = torch.load('pretrained_opponents/smac/pretrained_parameters/1c3s5z/rmappo_agent_0.pt')
+    params_dir = 'opponent_transformer/smac/pretrained_opponents/pretrained_parameters/1c3s5z'
+    params_path = os.path.join(params_dir, 'rmappo_agent_0.pt')
+    save_dict = torch.load(params_path, map_location='cpu')
 
     modified_save_dict = {
         'feature_norm.weight': save_dict['base.feature_norm.weight'],

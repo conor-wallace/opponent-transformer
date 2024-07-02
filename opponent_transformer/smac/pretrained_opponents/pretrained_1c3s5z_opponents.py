@@ -66,11 +66,13 @@ class RMAPPONet(nn.Module):
         action = onehot_from_logits(logits)
         return action, hxs
 
-
+params_dir = 'opponent_transformer/smac/pretrained_opponents/pretrained_parameters/1c3s5z'
 num_rmappo_models = 1
 rmappo_agents = [RMAPPONet(310, 15, 64) for _ in range(num_rmappo_models)]
 for i in range(num_rmappo_models):
-    save_dict = torch.load('pretrained_opponents/smac/pretrained_parameters/1c3s5z/rmappo_agent_' + str(i) + '.pt')
+    print("CWD: ", os.getcwd())
+    params_path = os.path.join(params_dir, 'rmappo_agent_' + str(i) + '.pt')
+    save_dict = torch.load(params_path, map_location='cpu')
     modified_save_dict = {
         'feature_norm.weight': save_dict['base.feature_norm.weight'],
         'feature_norm.bias': save_dict['base.feature_norm.bias'],

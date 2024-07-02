@@ -6,14 +6,13 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 import tyro
 from torch.utils.tensorboard import SummaryWriter
 
-from opponent_transformer.envs import ShareDummyVecEnv, ShareSubprocVecEnv, StarCraft2Env
-from opponent_transformer.models.policies import NAM
-from opponent_transformer.training import Buffer
+from opponent_transformer.envs import ShareDummyVecEnv, StarCraft2Env
+from opponent_transformer.smac.models.policies import NAM
+from opponent_transformer.smac.training import Buffer
 from opponent_transformer.smac.pretrained_opponents.pretrained_1c3s5z_opponents import get_opponent_actions
 
 
@@ -33,8 +32,6 @@ class Args:
     """the wandb's project name"""
     wandb_entity: str = "bhd445"
     """the entity (team) of wandb's project"""
-    capture_video: bool = False
-    """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
     env_id: str = "1c3s5z"
@@ -77,8 +74,6 @@ class Args:
     """coefficient of the value function"""
     max_grad_norm: float = 0.25
     """the maximum norm for the gradient clipping"""
-    target_kl: float = None
-    """the target KL divergence threshold"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -123,7 +118,7 @@ def evaluate(agent, eval_envs, args):
     agent_hidden_states = torch.zeros(agent.lstm.num_layers, args.num_eval_envs, agent.lstm.hidden_size).to(device)
     agent_cell_states = torch.zeros(agent.lstm.num_layers, args.num_eval_envs, agent.lstm.hidden_size).to(device)
 
-    last_action = torch.zeros(args.num_eval_envs, agent.act_dim).to(device, dtype=torch.float32).to(device)
+    last_agent_actions = torch.zeros(args.num_eval_envs, agent.act_dim).to(device, dtype=torch.float32).to(device)
 
     tasks = np.random.choice(range(args.num_opponent_policies), size=args.num_eval_envs)
 
@@ -146,9 +141,6 @@ def evaluate(agent, eval_envs, args):
             )
             oppnt_actions.append(oppnt_actions_id.unsqueeze(0))
         oppnt_actions = torch.cat(oppnt_actions)
-
-        print("Agent hidden states shape: ", agent_hidden_states.shape)
-        print("Agent cell states shape: ", agent_cell_states.shape)
 
         x = torch.cat((agent_obs, last_agent_actions), dim=-1)
         agent_actions, agent_values, agent_lstm_states = agent.act(
@@ -173,7 +165,7 @@ def evaluate(agent, eval_envs, args):
         oppnt_masks = torch.ones((args.num_eval_envs, agent.num_opponents, 1), dtype=torch.float32)
         oppnt_masks[dones_env == True] = torch.zeros(((dones_env == True).sum(), agent.num_opponents, 1), dtype=torch.float32)
 
-        for i in range(num_envs):
+        for i in range(args.num_eval_envs):
             if dones_env[i]:
                 episode += 1
                 episode_rewards.append(np.sum(one_episode_rewards, axis=0))
@@ -181,7 +173,7 @@ def evaluate(agent, eval_envs, args):
                 if infos[i][0]['won']:
                     battles_won += 1
 
-        if episode >= num_episodes:
+        if episode >= args.num_eval_episodes:
             episode_rewards = np.array(episode_rewards)
             avg_reward = episode_rewards.mean()
             win_rate = battles_won / episode
@@ -228,10 +220,10 @@ if __name__ == "__main__":
     env_fns = [make_env(args.env_id, i) for i in range(args.num_envs)]
     envs = ShareDummyVecEnv(env_fns)
 
-    eval_env_fns = [make_eval_env(args.env_id, i) for i in range(args.num_envs)]
+    eval_env_fns = [make_eval_env(args.env_id, i) for i in range(args.num_eval_envs)]
     eval_envs = ShareDummyVecEnv(eval_env_fns)
 
-    agent = Agent(envs).to(device)
+    agent = NAM(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     buffer = Buffer(
@@ -283,6 +275,7 @@ if __name__ == "__main__":
                 optimizer.param_groups[0]["lr"] = lrnow
 
             for step in range(0, args.batch_size):
+                # print(f"Iteration: {iteration}, Minibatch: {idx}, Step: {counter}")
                 agent_obs = torch.from_numpy(obs[:, -1])
                 oppnt_obs = torch.from_numpy(obs[:, :-1])
                 agent_available_actions = torch.from_numpy(available_actions[:, -1])
@@ -394,7 +387,7 @@ if __name__ == "__main__":
                 optimizer.step()
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        if (episodes_passed % 100 == 0) and (counter == 0):
+        if (episodes_passed % 10 == 0) and (counter == 0):
             average_reward, win_rate = evaluate(agent, eval_envs, args)
             print(f"Episode={episodes_passed}, episodic_return={average_reward}, win_rate={win_rate}")
             print("SPS:", int(global_step / (time.time() - start_time)))

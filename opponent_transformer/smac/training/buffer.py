@@ -34,8 +34,8 @@ class Buffer:
         self.dones = torch.zeros((num_minibatches, batch_size, num_envs)).to(device)
         self.values = torch.zeros((num_minibatches, batch_size + 1, num_envs)).to(device)
         self.returns = torch.zeros((num_minibatches, batch_size + 1, num_envs)).to(device)
-        self.hidden_states = torch.zeros((num_minibatches, 1, num_envs, hidden_size)).to(device)
-        self.cell_states = torch.zeros((num_minibatches, 1, num_envs, hidden_size)).to(device)
+        self.hidden_states = torch.zeros((num_minibatches, num_lstm_layers, num_envs, hidden_size)).to(device)
+        self.cell_states = torch.zeros((num_minibatches, num_lstm_layers, num_envs, hidden_size)).to(device)
 
         self.running_mean = RunningMeanStd(shape=1, device=device)
 
@@ -64,7 +64,7 @@ class Buffer:
         self.values[idx] = self.values[idx] * torch.sqrt(self.running_mean.var) + self.running_mean.mean
 
         lastgaelam = 0
-        for t in reversed(range(args.batch_size)):
+        for t in reversed(range(self.batch_size)):
             delta = self.rewards[idx, t] + self.gamma * self.values[idx, t + 1] * (1.0 - self.dones[idx, t]) - self.values[idx, t]
             lastgaelam = delta + self.gamma * self.gae_lambda * (1.0 - self.dones[idx, t]) * lastgaelam
             self.returns[idx, t] = lastgaelam + self.values[idx, t]

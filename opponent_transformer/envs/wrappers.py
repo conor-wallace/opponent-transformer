@@ -440,8 +440,13 @@ class ShareDummyVecEnv(ShareVecEnv):
     def __init__(self, env_fns):
         self.envs = [fn() for fn in env_fns]
         env = self.envs[0]
-        ShareVecEnv.__init__(self, len(
-            env_fns), env.observation_space, env.share_observation_space, env.action_space)
+        ShareVecEnv.__init__(
+            self,
+            len(env_fns),
+            env.observation_space,
+            env.share_observation_space,
+            env.action_space
+        )
         self.actions = None
 
     def step_async(self, actions):
