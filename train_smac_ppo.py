@@ -11,8 +11,7 @@ import tyro
 from torch.utils.tensorboard import SummaryWriter
 
 from opponent_transformer.envs import ShareDummyVecEnv, StarCraft2Env
-from opponent_transformer.smac.models.policies import NAM
-from opponent_transformer.smac.training import Buffer
+from opponent_transformer.smac.training import SMACTrainer
 from opponent_transformer.smac.pretrained_opponents.pretrained_1c3s5z_opponents import get_opponent_actions
 
 
@@ -24,9 +23,9 @@ class Args:
     """seed of the experiment"""
     torch_deterministic: bool = True
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
-    cuda: bool = False
+    cuda: bool = True
     """if toggled, cuda will be enabled by default"""
-    track: bool = True
+    track: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "cleanRL"
     """the wandb's project name"""
@@ -36,6 +35,12 @@ class Args:
     # Algorithm specific arguments
     env_id: str = "1c3s5z"
     """the id of the environment"""
+    model_type: str = "NAM"
+    """the agent policy type, can be one of [NAM, LIAM, OT, Oracle]"""
+    hidden_dim: int = 128
+    """the hidden dimension of the agent policy"""
+    num_rnn_layers: int = 1
+    """the number of GRU layers for the agent policy"""
     total_timesteps: int = 10000000
     """total timesteps of the experiments"""
     learning_rate: float = 3e-4
@@ -52,16 +57,22 @@ class Args:
     """the number of steps to run in each environment per policy rollout"""
     episode_length: int = 400
     """the maximum length of an episode"""
+    log_interval: int = 1
+    """the number of episodes between logging"""
+    eval_interval: int = 1
+    """the number of episodes between evaluation"""
     anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
     gamma: float = 0.99
     """the discount factor gamma"""
     gae_lambda: float = 0.95
     """the lambda for the general advantage estimation"""
-    num_minibatches: int = 10
+    num_mini_batch: int = 1
     """the number of mini-batches"""
-    update_epochs: int = 1
+    num_epochs: int = 1
     """the K epochs to update the policy"""
+    data_chunk_length: int = 10
+    """chunk length for training recurrent policies"""
     norm_adv: bool = True
     """Toggles advantages normalization"""
     clip_coef: float = 0.1
@@ -70,7 +81,9 @@ class Args:
     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
     ent_coef: float = 0.01
     """coefficient of the entropy"""
-    vf_coef: float = 1.0
+    huber_coef: float = 10.0
+    """coefficient for huber loss"""
+    value_coef: float = 1.0
     """coefficient of the value function"""
     max_grad_norm: float = 0.25
     """the maximum norm for the gradient clipping"""
@@ -185,7 +198,7 @@ def evaluate(agent, eval_envs, args):
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
-    args.batch_size = int(args.episode_length // args.num_minibatches)
+    args.batch_size = int(args.episode_length // args.num_mini_batch)
     args.num_iterations = args.total_timesteps // (args.episode_length * args.num_envs)
     print(f"Num iterations: {args.num_iterations}")
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
@@ -224,24 +237,15 @@ if __name__ == "__main__":
     eval_env_fns = [make_eval_env(args.env_id, i) for i in range(args.num_eval_envs)]
     eval_envs = ShareDummyVecEnv(eval_env_fns)
 
-    agent = NAM(envs).to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
-
-    buffer = Buffer(
-        num_minibatches=args.num_minibatches,
-        batch_size=args.batch_size,
-        gamma=args.gamma,
-        gae_lambda=args.gae_lambda,
-        num_envs=args.num_envs,
-        num_opponents=agent.num_opponents,
-        agent_obs_dim=agent.obs_dim,
-        agent_act_dim=agent.act_dim,
-        oppnt_obs_dim=agent.opp_obs_dim,
-        oppnt_act_dim=agent.opp_act_dim,
-        num_lstm_layers=agent.lstm.num_layers,
-        hidden_size=agent.lstm.hidden_size,
-        device=device
+    trainer = SMACTrainer(
+        args=args,
+        envs=envs,
+        eval_envs=eval_envs,
     )
+
+    trainer.run()
+
+    exit()
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0

@@ -1,3 +1,4 @@
 # noqa: F401
-from .buffer import Buffer
+from .buffer import PPOBuffer
 from .running_mean import RunningMeanStd
+from .trainer import SMACTrainer
