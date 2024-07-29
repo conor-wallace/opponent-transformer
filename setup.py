@@ -14,7 +14,6 @@ setup(
     name="opponent_transformer",  # Replace with your own username
     version=get_version(),
     description="opponent-transformer",
-    long_description=open("README.md", encoding="utf8").read(),
     long_description_content_type="text/markdown",
     author="conor wallace",
     author_email="conorw8@gmail.com",
