@@ -1,12 +1,11 @@
 import torch
 import torch.nn as nn
-from onpolicy.algorithms.utils.util import init, check
-from onpolicy.algorithms.utils.cnn import CNNBase
-from onpolicy.algorithms.utils.mlp import MLPBase
-from onpolicy.algorithms.utils.rnn import RNNLayer
-from onpolicy.algorithms.utils.act import ACTLayer
-from onpolicy.algorithms.utils.popart import PopArt
-from onpolicy.utils.util import get_shape_from_obs_space
+from opponent_transformer.algorithms.utils.cnn import CNNBase
+from opponent_transformer.algorithms.utils.mlp import MLPBase
+from opponent_transformer.algorithms.utils.rnn import RNNLayer
+from opponent_transformer.algorithms.utils.act import ACTLayer
+from opponent_transformer.algorithms.utils.popart import PopArt
+from opponent_transformer.utils.util import init, check, get_shape_from_obs_space
 
 
 class Actor(nn.Module):

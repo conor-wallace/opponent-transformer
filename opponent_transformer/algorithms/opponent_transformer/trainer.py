@@ -4,7 +4,7 @@ import torch.nn as nn
 
 from opponent_transformer.utils.util import get_grad_norm, huber_loss, mse_loss
 from opponent_transformer.utils.valuenorm import ValueNorm
-from opponent_transformer.algorithms.utils.util import check
+from opponent_transformer.utils.util import check
 
 
 class OpponentTransformerTrainer():
@@ -17,11 +17,13 @@ class OpponentTransformerTrainer():
     def __init__(self,
                  args,
                  policy,
+                 opponent_policy,
                  device=torch.device("cpu")):
 
         self.device = device
         self.tpdv = dict(dtype=torch.float32, device=device)
         self.policy = policy
+        self.opponent_policy = opponent_policy
 
         self.clip_param = args.clip_param
         self.ppo_epoch = args.ppo_epoch
@@ -145,7 +147,7 @@ class OpponentTransformerTrainer():
         if self._use_max_grad_norm:
             actor_grad_norm = nn.utils.clip_grad_norm_(self.policy.actor.parameters(), self.max_grad_norm)
         else:
-            actor_grad_norm = get_gard_norm(self.policy.actor.parameters())
+            actor_grad_norm = get_grad_norm(self.policy.actor.parameters())
 
         self.policy.actor_optimizer.step()
 
@@ -159,7 +161,7 @@ class OpponentTransformerTrainer():
         if self._use_max_grad_norm:
             critic_grad_norm = nn.utils.clip_grad_norm_(self.policy.critic.parameters(), self.max_grad_norm)
         else:
-            critic_grad_norm = get_gard_norm(self.policy.critic.parameters())
+            critic_grad_norm = get_grad_norm(self.policy.critic.parameters())
 
         self.policy.critic_optimizer.step()
 

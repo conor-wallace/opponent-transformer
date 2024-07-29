@@ -10,7 +10,6 @@ from pathlib import Path
 
 from opponent_transformer.config import get_config
 from opponent_transformer.envs.starcraft2.StarCraft2_Env import StarCraft2Env
-from opponent_transformer.envs.starcraft2.smac_maps import get_map_params
 from opponent_transformer.envs.env_wrappers import ShareSubprocVecEnv, ShareDummyVecEnv
 from opponent_transformer.runner.smac_runner import SMACRunner as Runner
 

@@ -3,11 +3,16 @@ import os
 import numpy as np
 import torch
 from tensorboardX import SummaryWriter
-from onpolicy.utils.shared_buffer import SharedReplayBuffer
+from opponent_transformer.utils.shared_buffer import SharedReplayBuffer
+from opponent_transformer.algorithms.opponent_transformer.trainer import OpponentTransformerTrainer as Trainer
+from opponent_transformer.algorithms.opponent_transformer.algorithm.opponent_policy import OpponentPolicy
+from opponent_transformer.algorithms.opponent_transformer.algorithm.transformer_policy import OpponentTransformerPolicy as Policy
+
 
 def _t2n(x):
     """Convert torch tensor to a numpy array."""
     return x.detach().cpu().numpy()
+
 
 class Runner(object):
     """
@@ -65,27 +70,41 @@ class Runner(object):
             if not os.path.exists(self.save_dir):
                 os.makedirs(self.save_dir)
 
-        from onpolicy.algorithms.r_mappo.r_mappo import R_MAPPO as TrainAlgo
-        from onpolicy.algorithms.r_mappo.algorithm.rMAPPOPolicy import R_MAPPOPolicy as Policy
-
         share_observation_space = self.envs.share_observation_space[0] if self.use_centralized_V else self.envs.observation_space[0]
 
         # policy network
-        self.policy = Policy(self.all_args,
-                            self.envs.observation_space[0],
-                            share_observation_space,
-                            self.envs.action_space[0],
-                            device = self.device)
+        self.policy = Policy(
+            self.all_args,
+            self.envs.observation_space[0],
+            share_observation_space,
+            self.envs.action_space[0],
+            device=self.device
+        )
+        # opponent policy network
+        self.opponent_policy = OpponentPolicy(
+            self.all_args,
+            self.envs.observation_space[0],
+            share_observation_space,
+            self.envs.action_space[0],
+            device=self.device
+        )
 
         # algorithm
-        self.trainer = TrainAlgo(self.all_args, self.policy, device = self.device)
+        self.trainer = Trainer(
+            self.all_args,
+            self.policy,
+            self.opponent_policy,
+            device=self.device
+        )
 
         # buffer
-        self.buffer = SharedReplayBuffer(self.all_args,
-                                        self.num_agents,
-                                        self.envs.observation_space[0],
-                                        share_observation_space,
-                                        self.envs.action_space[0])
+        self.buffer = SharedReplayBuffer(
+            self.all_args,
+            self.num_agents,
+            self.envs.observation_space[0],
+            share_observation_space,
+            self.envs.action_space[0]
+        )
 
         if self.model_dir is not None:
             self.restore()
