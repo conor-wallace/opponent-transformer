@@ -78,7 +78,7 @@ class Runner(object):
             self.envs.observation_space[0],
             share_observation_space,
             self.envs.action_space[0],
-            device=self.device
+            device = self.device
         )
         # opponent policy network
         self.opponent_policy = OpponentPolicy(
@@ -86,7 +86,7 @@ class Runner(object):
             self.envs.observation_space[0],
             share_observation_space,
             self.envs.action_space[0],
-            device=self.device
+            device = self.device
         )
 
         # algorithm
@@ -94,7 +94,7 @@ class Runner(object):
             self.all_args,
             self.policy,
             self.opponent_policy,
-            device=self.device
+            device = self.device
         )
 
         # buffer
