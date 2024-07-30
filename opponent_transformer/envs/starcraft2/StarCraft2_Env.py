@@ -67,19 +67,7 @@ class StarCraft2Env(MultiAgentEnv):
 
     def __init__(
         self,
-        map_name,
-        add_local_obs=False,
-        add_move_state=False,
-        add_visible_state=False,
-        add_distance_state=False,
-        add_xy_state=False,
-        add_enemy_action_state=False,
-        add_agent_id=False,
-        use_state_agent=True,
-        use_mustalive=True,
-        add_center_xy=True,
-        use_stacked_frames=False,
-        stacked_frames=1,
+        args,
         step_mul=8,
         move_amount=2,
         difficulty="7",
@@ -109,7 +97,6 @@ class StarCraft2Env(MultiAgentEnv):
         reward_scale_rate=20,
         replay_dir="",
         replay_prefix="",
-        use_obs_instead_of_state=False,
         window_size_x=1920,
         window_size_y=1200,
         heuristic_ai=False,
@@ -213,19 +200,19 @@ class StarCraft2Env(MultiAgentEnv):
             debugging purposes (default is False).
         """
         # Map arguments
-        self.map_name = map_name
-        self.add_local_obs = add_local_obs
-        self.add_move_state = add_move_state
-        self.add_visible_state = add_visible_state
-        self.add_distance_state = add_distance_state
-        self.add_xy_state = add_xy_state
-        self.add_enemy_action_state = add_enemy_action_state
-        self.add_agent_id = add_agent_id
-        self.use_state_agent = use_state_agent
-        self.use_mustalive = use_mustalive
-        self.add_center_xy = add_center_xy
-        self.use_stacked_frames = use_stacked_frames
-        self.stacked_frames = stacked_frames
+        self.map_name = args.map_name
+        self.add_local_obs = args.add_local_obs
+        self.add_move_state = args.add_move_state
+        self.add_visible_state = args.add_visible_state
+        self.add_distance_state = args.add_distance_state
+        self.add_xy_state = args.add_xy_state
+        self.add_enemy_action_state = args.add_enemy_action_state
+        self.add_agent_id = args.add_agent_id
+        self.use_state_agent = args.use_state_agent
+        self.use_mustalive = args.use_mustalive
+        self.add_center_xy = args.add_center_xy
+        self.use_stacked_frames = args.use_stacked_frames
+        self.stacked_frames = args.stacked_frames
         
         map_params = get_map_params(self.map_name)
         self.n_agents = map_params["n_agents"]
@@ -238,7 +225,7 @@ class StarCraft2Env(MultiAgentEnv):
         # Observations and state
         self.obs_own_health = obs_own_health
         self.obs_all_health = obs_all_health
-        self.obs_instead_of_state = use_obs_instead_of_state
+        self.obs_instead_of_state = args.use_obs_instead_of_state
         self.obs_last_action = obs_last_action
 
         self.obs_pathing_grid = obs_pathing_grid
