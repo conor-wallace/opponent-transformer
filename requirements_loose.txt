@@ -1,0 +1,11 @@
+gym==0.17.2
+numpy==1.21.6
+protobuf==3.19.6
+PySC2==4.0.0
+s2clientprotocol==5.0.12.91115.0
+s2protocol==5.0.12.91115.0
+tensorboard
+torch<2.0
+tyro
+tqdm
+wandb
