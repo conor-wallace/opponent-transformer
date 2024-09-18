@@ -4,10 +4,10 @@ import torch.nn as nn
 
 from opponent_transformer.utils.util import get_grad_norm, huber_loss, mse_loss
 from opponent_transformer.utils.valuenorm import ValueNorm
-from opponent_transformer.utils.util import check
+from opponent_transformer.utils.util import check, compute_input
 
 
-class OpponentTransformerTrainer():
+class MLPTrainer():
     """
     Trainer class for Opponent Transformer to update policies.
     :param args: (argparse.Namespace) arguments containing relevant model, policy, and env information.
@@ -18,12 +18,14 @@ class OpponentTransformerTrainer():
                  args,
                  policy,
                  opponent_policy,
+                 opponent_model=None,
                  device=torch.device("cpu")):
 
         self.device = device
         self.tpdv = dict(dtype=torch.float32, device=device)
         self.policy = policy
         self.opponent_policy = opponent_policy
+        self.opponent_model = opponent_model
 
         self.clip_param = args.clip_param
         self.ppo_epoch = args.ppo_epoch
@@ -66,6 +68,7 @@ class OpponentTransformerTrainer():
         value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(-self.clip_param,
                                                                                         self.clip_param)
         if self._use_popart or self._use_valuenorm:
+            # print("Return batch update normalize shape: ", return_batch.shape)
             self.value_normalizer.update(return_batch)
             error_clipped = self.value_normalizer.normalize(return_batch) - value_pred_clipped
             error_original = self.value_normalizer.normalize(return_batch) - values
@@ -105,9 +108,18 @@ class OpponentTransformerTrainer():
         :return actor_grad_norm: (torch.Tensor) gradient norm from actor update.
         :return imp_weights: (torch.Tensor) importance sampling weights.
         """
-        share_obs_batch, obs_batch, rnn_states_batch, rnn_states_critic_batch, actions_batch, \
+        obs_batch, oppnt_obs_batch, rnn_states_batch, rnn_states_critic_batch, prev_actions_batch, actions_batch, oppnt_actions_batch,\
         value_preds_batch, return_batch, masks_batch, active_masks_batch, old_action_log_probs_batch, \
         adv_targ, available_actions_batch = sample
+
+        # print("obs batch shape: ", obs_batch.shape)
+        # print("actions batch shape: ", actions_batch.shape)
+        # print("old action logprobs batch shape: ", old_action_log_probs_batch.shape)
+        # print("values batch shape: ", value_preds_batch.shape)
+        # print("returns batch shape: ", return_batch.shape)
+        # print("advantages batch shape: ", adv_targ.shape)
+        # print("rnn states batch shape: ", rnn_states_batch.shape)
+        # print("rnn states critic batch shape: ", rnn_states_critic_batch.shape)
 
         old_action_log_probs_batch = check(old_action_log_probs_batch).to(**self.tpdv)
         adv_targ = check(adv_targ).to(**self.tpdv)
@@ -115,15 +127,41 @@ class OpponentTransformerTrainer():
         return_batch = check(return_batch).to(**self.tpdv)
         active_masks_batch = check(active_masks_batch).to(**self.tpdv)
 
+        batch_dim = obs_batch.shape[0]
+
+        if self.policy.algorithm_name == 'ppo':
+            x_batch = compute_input(
+                agent_obs=obs_batch,
+                action_dim=self.policy.act_space.n,
+                batch_dim=batch_dim
+            )
+        elif self.policy.algorithm_name == 'nam':
+            x_batch = compute_input(
+                agent_obs=obs_batch,
+                agent_actions=prev_actions_batch,
+                action_dim=self.policy.act_space.n,
+                batch_dim=batch_dim
+            )
+        elif self.policy.algorithm_name == 'oracle':
+            x_batch = compute_input(
+                agent_obs=obs_batch,
+                agent_actions=prev_actions_batch,
+                oppnt_obs=oppnt_obs_batch,
+                oppnt_actions=oppnt_actions_batch,
+                action_dim=self.policy.act_space.n,
+                batch_dim=batch_dim
+            )
+
         # Reshape to do in a single forward pass for all steps
-        values, action_log_probs, dist_entropy = self.policy.evaluate_actions(share_obs_batch,
-                                                                              obs_batch, 
-                                                                              rnn_states_batch, 
-                                                                              rnn_states_critic_batch, 
-                                                                              actions_batch, 
-                                                                              masks_batch, 
-                                                                              available_actions_batch,
-                                                                              active_masks_batch)
+        values, action_log_probs, dist_entropy = self.policy.evaluate_actions(
+            x_batch, 
+            rnn_states_batch, 
+            rnn_states_critic_batch, 
+            actions_batch, 
+            masks_batch, 
+            available_actions_batch,
+            active_masks_batch
+        )
         # actor update
         imp_weights = torch.exp(action_log_probs - old_action_log_probs_batch)
 
@@ -167,7 +205,7 @@ class OpponentTransformerTrainer():
 
         return value_loss, critic_grad_norm, policy_loss, dist_entropy, actor_grad_norm, imp_weights
 
-    def train(self, buffer, update_actor=True):
+    def train(self, buffer, oppnt_buffers, update_actor=True):
         """
         Perform a training update using minibatch GD.
         :param buffer: (SharedReplayBuffer) buffer containing training data.
@@ -184,7 +222,9 @@ class OpponentTransformerTrainer():
         mean_advantages = np.nanmean(advantages_copy)
         std_advantages = np.nanstd(advantages_copy)
         advantages = (advantages - mean_advantages) / (std_advantages + 1e-5)
-        
+
+        oppnt_obs = np.concatenate([oppnt_buffer.obs for oppnt_buffer in oppnt_buffers], -1)
+        oppnt_act = np.concatenate([oppnt_buffer.actions for oppnt_buffer in oppnt_buffers], -1)
 
         train_info = {}
 
@@ -197,7 +237,7 @@ class OpponentTransformerTrainer():
 
         for _ in range(self.ppo_epoch):
             if self._use_recurrent_policy:
-                data_generator = buffer.recurrent_generator(advantages, self.num_mini_batch, self.data_chunk_length)
+                data_generator = buffer.recurrent_generator(advantages, oppnt_obs, oppnt_act, self.num_mini_batch, self.data_chunk_length)
             elif self._use_naive_recurrent:
                 data_generator = buffer.naive_recurrent_generator(advantages, self.num_mini_batch)
             else:

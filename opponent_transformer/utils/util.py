@@ -16,9 +16,60 @@ def get_clones(module, N):
 
 
 def check(input):
-    if type(input) == np.ndarray:
-        return torch.from_numpy(input)
+    output = torch.from_numpy(input) if type(input) == np.ndarray else input
+    return output
         
+
+def pad_sequence(x, seq_length):
+    padding = np.zeros((seq_length, *x.shape[1:]))
+    x_padded = np.concatenate((padding, x))
+    return x_padded[-seq_length:]
+
+
+def stack_inputs(embeddings):
+    batch_size = embeddings[0].shape[0]
+    seq_length = embeddings[0].shape[1]
+    hidden_dim = embeddings[0].shape[2]
+    num_modalities = len(embeddings)
+
+    # this makes the sequence look like (R_1, s_1, a_1, R_2, s_2, a_2, ...)
+    # which works nice in an autoregressive sense since states predict actions
+    stacked_inputs = torch.stack(embeddings, dim=1).permute(0, 2, 1, 3).reshape(batch_size, num_modalities * seq_length, hidden_dim)
+
+    return stacked_inputs
+
+
+def stack_attention_mask(attention_mask, num_modalities, batch_size, seq_length):
+    # to make the attention mask fit the stacked inputs, have to stack it as well
+    stacked_attention_mask = torch.stack(
+        (attention_mask,) * num_modalities, dim=1
+    ).permute(0, 2, 1).reshape(batch_size, num_modalities * seq_length)
+
+    return stacked_attention_mask
+
+
+def compute_input(
+    agent_obs,
+    agent_actions=None,
+    oppnt_obs=None,
+    oppnt_actions=None,
+    eval=False,
+    batch_dim=None,
+    action_dim=None,
+):
+    if agent_actions is None and oppnt_obs is None and oppnt_actions is None:
+        x = agent_obs
+    elif oppnt_obs is None and oppnt_actions is None:
+        agent_actions_onehot = torch.functional.F.one_hot(torch.from_numpy(agent_actions).long(), action_dim).numpy()
+        x = np.concatenate((agent_obs, agent_actions_onehot), -1)
+    else:
+        agent_actions_onehot = torch.functional.F.one_hot(torch.from_numpy(agent_actions).long(), action_dim).numpy()
+        agent_actions_onehot = agent_actions_onehot.reshape(batch_dim, -1)
+
+        x = np.concatenate((agent_obs, agent_actions_onehot, oppnt_obs, oppnt_actions), -1)
+
+    return x
+
 
 def get_grad_norm(it):
     sum_grad = 0
@@ -44,6 +95,10 @@ def huber_loss(e, d):
 
 def mse_loss(e):
     return e**2/2
+
+
+def cross_entropy_loss(p, t):
+    return torch.nn.functional.cross_entropy(p, t)
 
 
 def get_shape_from_obs_space(obs_space):

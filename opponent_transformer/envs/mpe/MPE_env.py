@@ -2,8 +2,8 @@ from .environment import MultiAgentEnv
 from .scenarios import load
 
 
-def MPEEnv(env_name: str):
-    """
+def MPEEnv(args):
+    '''
     Creates a MultiAgentEnv object as env. This can be used similar to a gym
     environment by calling env.reset() and env.step().
     Use env.render() to view the environment on the screen.
@@ -18,19 +18,14 @@ def MPEEnv(env_name: str):
         .observation_space  :   Returns the observation space for each agent
         .action_space       :   Returns the action space for each agent
         .n                  :   Returns the number of Agents
-    """
+    '''
 
     # load scenario from script
-    scenario = load(env_name + ".py").Scenario()
+    scenario = load(args.scenario_name + ".py").Scenario()
     # create world
-    world = scenario.make_world()
+    world = scenario.make_world(args)
     # create multiagent environment
-    env = MultiAgentEnv(
-        world,
-        scenario.reset_world,
-        scenario.reward,
-        scenario.observation,
-        scenario.info,
-    )
+    env = MultiAgentEnv(world, scenario.reset_world,
+                        scenario.reward, scenario.observation, scenario.info)
 
     return env

@@ -24,6 +24,8 @@ class RMAPPONet(nn.Module):
     def __init__(self, input_dim, output_dim, hidden):
         super(RMAPPONet, self).__init__()
 
+        self.tpdv = dict(dtype=torch.float32, device='cpu')
+
         self.feature_norm = nn.LayerNorm(input_dim)
         self.fc1 = nn.Sequential(
             nn.Linear(input_dim, hidden),
@@ -40,10 +42,10 @@ class RMAPPONet(nn.Module):
         self.act = nn.Linear(hidden, output_dim)
     
     def forward(self, x, hxs, mask, available_actions):
-        x = x.unsqueeze(0)
-        hxs = hxs.unsqueeze(0)
-        mask = mask.unsqueeze(0)
-        available_actions = available_actions.unsqueeze(0)
+        x = torch.from_numpy(x).to(**self.tpdv).unsqueeze(0)
+        hxs = torch.from_numpy(hxs).to(**self.tpdv).unsqueeze(0)
+        mask = torch.from_numpy(mask).to(**self.tpdv).unsqueeze(0)
+        available_actions = torch.from_numpy(available_actions).to(**self.tpdv).unsqueeze(0)
 
         x = self.feature_norm(x)
         x = self.fc1(x)
@@ -66,7 +68,7 @@ class RMAPPONet(nn.Module):
         action = onehot_from_logits(logits)
         return action, hxs
 
-params_dir = 'opponent_transformer/smac/pretrained_opponents/pretrained_parameters/1c3s5z'
+params_dir = '../../opponent_transformer/smac/pretrained_opponents/pretrained_parameters/1c3s5z'
 num_rmappo_models = 1
 rmappo_agents = [RMAPPONet(310, 15, 64) for _ in range(num_rmappo_models)]
 for i in range(num_rmappo_models):

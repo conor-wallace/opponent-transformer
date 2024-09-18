@@ -20,6 +20,7 @@ class Actor(nn.Module):
     def __init__(self, args, obs_space, action_space, device=torch.device("cpu"), embedding_size=None):
         super(Actor, self).__init__()
         self.hidden_size = args.hidden_size
+        self.embedding_size = args.embedding_size
 
         self._gain = args.gain
         self._use_orthogonal = args.use_orthogonal
@@ -31,7 +32,10 @@ class Actor(nn.Module):
 
         obs_shape = get_shape_from_obs_space(obs_space)
         base = CNNBase if len(obs_shape) == 3 else MLPBase
-        self.base = base(args, obs_shape, embedding_size=embedding_size)
+        if embedding_size is not None:
+            self.base = base(args, [embedding_size])
+        else:
+            self.base = base(args, obs_shape)
 
         if self._use_naive_recurrent_policy or self._use_recurrent_policy:
             self.rnn = RNNLayer(self.hidden_size, self.hidden_size, self._recurrent_N, self._use_orthogonal)
@@ -119,6 +123,8 @@ class Critic(nn.Module):
     def __init__(self, args, cent_obs_space, device=torch.device("cpu"), embedding_size=None):
         super(Critic, self).__init__()
         self.hidden_size = args.hidden_size
+        self.embedding_size = args.embedding_size
+
         self._use_orthogonal = args.use_orthogonal
         self._use_naive_recurrent_policy = args.use_naive_recurrent_policy
         self._use_recurrent_policy = args.use_recurrent_policy
@@ -129,7 +135,10 @@ class Critic(nn.Module):
 
         cent_obs_shape = get_shape_from_obs_space(cent_obs_space)
         base = CNNBase if len(cent_obs_shape) == 3 else MLPBase
-        self.base = base(args, cent_obs_shape, embedding_size=embedding_size)
+        if embedding_size is not None:
+            self.base = base(args, [embedding_size])
+        else:
+            self.base = base(args, cent_obs_shape)
 
         if self._use_naive_recurrent_policy or self._use_recurrent_policy:
             self.rnn = RNNLayer(self.hidden_size, self.hidden_size, self._recurrent_N, self._use_orthogonal)

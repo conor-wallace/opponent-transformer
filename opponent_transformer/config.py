@@ -52,6 +52,8 @@ def get_config():
             Number of input frames which should be stack together.
         --hidden_size <int>
             Dimension of hidden layers for actor/critic networks
+        --embedding_size <int>
+            Dimension of embedding layers for actor/critic networks
         --layer_N <int>
             Number of layers for actor/critic networks
         --use_ReLU
@@ -158,7 +160,7 @@ def get_config():
 
     # prepare parameters
     parser.add_argument("--algorithm_name", type=str,
-                        default='mappo', choices=["ppo", "nam", "oracle"])
+                        default='mappo', choices=["ppo", "nam", "oracle", "ot"])
 
     parser.add_argument("--experiment_name", type=str, default="check", help="an identifier to distinguish different experiment.")
     parser.add_argument("--seed", type=int, default=1, help="Random seed for numpy/torch")
@@ -198,6 +200,8 @@ def get_config():
                         default=False, help="Whether to use stacked_frames")
     parser.add_argument("--hidden_size", type=int, default=64,
                         help="Dimension of hidden layers for actor/critic networks") 
+    parser.add_argument("--embedding_size", type=int, default=64,
+                        help="Dimension of embedding layers for actor/critic networks") 
     parser.add_argument("--layer_N", type=int, default=1,
                         help="Number of layers for actor/critic networks")
     parser.add_argument("--use_ReLU", action='store_false',
@@ -220,11 +224,24 @@ def get_config():
     parser.add_argument("--data_chunk_length", type=int, default=10,
                         help="Time length of chunks used to train a recurrent_policy")
 
+    # transformer parameters
+    parser.add_argument("--max_length", type=int, default=5, help="Transformer context length.")
+    parser.add_argument("--block_size", type=int, default=128,
+                        help="Dimension of hidden layers in transformer blocks.") 
+    parser.add_argument("--neck_size", type=int, default=32,
+                        help="Dimension of embedding neck after transformer blocks.")
+    parser.add_argument("--use_embedding_layer", action='store_false',
+                        default=True, help='Add an embedding neck layer at the end of transformer blocks.')
+    parser.add_argument("--fuse_embeddings", action='store_false',
+                        default=False, help='Fuse transformer embeddings with average pooling.')
+
     # optimizer parameters
     parser.add_argument("--lr", type=float, default=5e-4,
                         help='learning rate (default: 5e-4)')
     parser.add_argument("--critic_lr", type=float, default=5e-4,
                         help='critic learning rate (default: 5e-4)')
+    parser.add_argument("--opponent_lr", type=float, default=5e-4,
+                        help='opponent model learning rate (default: 5e-4)')
     parser.add_argument("--opti_eps", type=float, default=1e-5,
                         help='RMSprop optimizer epsilon (default: 1e-5)')
     parser.add_argument("--weight_decay", type=float, default=0)
@@ -283,5 +300,6 @@ def get_config():
 
     # pretrained parameters
     parser.add_argument("--model_dir", type=str, default=None, help="by default None. set the path to pretrained model.")
+    parser.add_argument("--opponent_dir", type=str, default=None, help="by default None. set the path to pretrained opponent models.")
 
     return parser

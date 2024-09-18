@@ -3,7 +3,8 @@ import wandb
 import numpy as np
 from functools import reduce
 import torch
-from opponent_transformer.runner.base_runner import Runner
+from opponent_transformer.runner.mlp_runner.base_shared_runner import Runner
+from opponent_transformer.utils.util import compute_input
 
 
 def _t2n(x):
@@ -24,16 +25,32 @@ class SMACRunner(Runner):
         last_battles_game = np.zeros(self.n_rollout_threads, dtype=np.float32)
         last_battles_won = np.zeros(self.n_rollout_threads, dtype=np.float32)
 
+        self.tasks = np.array([
+            [9, 9, 9, 9, 16, 16, 16, 16], # rmappo high 0, rmappo medium 1
+            [10, 10, 10, 10, 14, 14, 14, 14], # rmappo high 1, rmappo low 2
+            [17, 17, 17, 17, 12, 12, 12, 12], # rmappo medium 2, rmappo low 0
+            [0, 0, 0, 0, 7, 7, 7, 7], # rippo high 0, rippo medium 1 
+            [1, 1, 1, 1, 5, 5, 5, 5], # rippo high 1, rippo low 2
+            [8, 8, 8, 8, 3, 3, 3, 3], # rippo medium 2, rippo low 0
+            [9, 9, 9, 9, 1, 1, 1, 1], # rmappo high 0, rippo high 1
+            [16, 16, 16, 16, 8, 8, 8, 8], # rmappo medium 1, rippo medium 2
+            [14, 14, 14, 14, 3, 3, 3, 3], # rmappo low 2, rippo low 0
+            [0, 0, 0, 0, 10, 10, 10, 10], # rippo high 0, rmappo high 1
+            [7, 7, 7, 7, 17, 17, 17, 17], # rippo medium 1, rmappo medium 2
+            [5, 5, 5, 5, 12, 12, 12, 12], # rippo low 2, rmappo low 0
+        ])
+
         for episode in range(episodes):
             if self.use_linear_lr_decay:
                 self.trainer.policy.lr_decay(episode, episodes)
 
+            episode_tasks = np.random.choice(self.trainer.opponent_policy.num_policies, self.n_rollout_threads)
+
             for step in range(self.episode_length):
                 # Sample actions
-                values, actions, action_log_probs, rnn_states, rnn_states_critic = self.collect(step)
+                values, actions, action_log_probs, rnn_states, rnn_states_critic = self.collect(step, episode_tasks)
 
                 # Obser reward and next obs
-                # print("Actions shape: ", actions.shape)
                 obs, _, rewards, dones, infos, available_actions = self.envs.step(actions)
 
                 data = obs, rewards, dones, infos, available_actions, \
@@ -44,7 +61,7 @@ class SMACRunner(Runner):
                 self.insert(data)
 
             # compute return and update network
-            self.compute()
+            self.compute(episode_tasks)
             train_infos = self.train()
 
             # post process
@@ -57,7 +74,7 @@ class SMACRunner(Runner):
             if episode % self.log_interval == 0:
                 end = time.time()
                 print("\n Map {} Algo {} Exp {} updates {}/{} episodes, total num timesteps {}/{}, FPS {}.\n"
-                        .format(self.all_args.map_name,
+                        .format(self.agent_args.map_name,
                                 self.algorithm_name,
                                 self.experiment_name,
                                 episode,
@@ -107,24 +124,55 @@ class SMACRunner(Runner):
         self.buffer.available_actions[0] = available_actions.copy()
 
     @torch.no_grad()
-    def collect(self, step):
+    def collect(self, step, tasks):
         self.trainer.prep_rollout()
 
-        # get agent actions
-        agent_value, agent_action, agent_action_log_prob, agent_rnn_state, agent_rnn_state_critic \
-            = self.trainer.policy.get_actions(
-                np.concatenate(self.buffer.obs[step, :, -1]),
-                np.concatenate(self.buffer.rnn_states[step, :, -1]),
-                np.concatenate(self.buffer.rnn_states_critic[step, :, -1]),
-                np.concatenate(self.buffer.masks[step, :, -1]),
-                np.concatenate(self.buffer.available_actions[step, :, -1])
-        )
         # get opponent actions
         oppnt_action, oppnt_action_log_prob, oppnt_rnn_state = self.trainer.opponent_policy.get_actions(
-                np.concatenate(self.buffer.obs[step, :, :-1]),
-                np.concatenate(self.buffer.rnn_states[step, :, :-1]),
-                np.concatenate(self.buffer.masks[step, :, :-1]),
-                np.concatenate(self.buffer.available_actions[step, :, :-1])
+            self.buffer.obs[step, :, :-1],
+            self.buffer.rnn_states[step, :, :-1],
+            self.buffer.masks[step, :, :-1],
+            self.buffer.available_actions[step, :, :-1],
+            tasks
+        )
+
+        oppnt_actions = np.array(np.split(_t2n(oppnt_action), self.n_rollout_threads))
+        oppnt_action_log_probs = np.array(np.split(_t2n(oppnt_action_log_prob), self.n_rollout_threads))
+        oppnt_rnn_states = np.array(np.split(_t2n(oppnt_rnn_state), self.n_rollout_threads))
+        oppnt_rnn_states_critic = np.zeros_like(oppnt_rnn_states)
+
+        # get agent actions
+
+        if self.algorithm_name == 'ppo':
+            x = compute_input(
+                agent_obs=self.buffer.obs[step, :, -1],
+                action_dim=self.envs.action_space[0].n,
+                batch_dim=self.n_rollout_threads
+            )
+        elif self.algorithm_name == 'nam':
+            x = compute_input(
+                agent_obs=self.buffer.obs[step, :, -1],
+                agent_actions=self.buffer.actions[step - 1, :, -1],
+                action_dim=self.envs.action_space[0].n,
+                batch_dim=self.n_rollout_threads
+            )
+        elif self.algorithm_name == 'oracle':
+            x = compute_input(
+                agent_obs=self.buffer.obs[step, :, -1],
+                agent_actions=self.buffer.actions[step - 1, :, -1],
+                oppnt_obs=self.buffer.obs[step, :, :-1],
+                oppnt_actions=oppnt_actions,
+                action_dim=self.envs.action_space[0].n,
+                batch_dim=self.n_rollout_threads
+            )
+
+        agent_value, agent_action, agent_action_log_prob, agent_rnn_state, agent_rnn_state_critic \
+            = self.trainer.policy.get_actions(
+            x,
+            np.concatenate(np.expand_dims(self.buffer.rnn_states[step, :, -1], 1)),
+            np.concatenate(np.expand_dims(self.buffer.rnn_states_critic[step, :, -1], 1)),
+            np.concatenate(np.expand_dims(self.buffer.masks[step, :, -1], 1)),
+            np.concatenate(np.expand_dims(self.buffer.available_actions[step, :, -1], 1))
         )
 
         # [self.envs, agents, dim]
@@ -132,16 +180,13 @@ class SMACRunner(Runner):
         agent_actions = np.array(np.split(_t2n(agent_action), self.n_rollout_threads))
         agent_action_log_probs = np.array(np.split(_t2n(agent_action_log_prob), self.n_rollout_threads))
         agent_rnn_states = np.array(np.split(_t2n(agent_rnn_state), self.n_rollout_threads))
-        rnn_states_critic = np.array(np.split(_t2n(agent_rnn_state_critic), self.n_rollout_threads))
-
-        oppnt_actions = np.array(np.split(_t2n(oppnt_action), self.n_rollout_threads))
-        oppnt_action_log_probs = np.array(np.split(_t2n(oppnt_action_log_prob), self.n_rollout_threads))
-        oppnt_rnn_states = np.array(np.split(_t2n(oppnt_rnn_state), self.n_rollout_threads))
+        agent_rnn_states_critic = np.array(np.split(_t2n(agent_rnn_state_critic), self.n_rollout_threads))
 
         # combine agent and oppnt arrays
-        actions = np.concatenate((oppnt_actions, agent_actions), axis=-1)
-        action_log_probs = np.concatenate((oppnt_action_log_probs, agent_action_log_probs), axis=-1)
-        rnn_states = np.concatenate((oppnt_rnn_states, agent_rnn_states), axis=-1)
+        actions = np.concatenate((oppnt_actions, agent_actions), axis=1)
+        action_log_probs = np.concatenate((oppnt_action_log_probs, agent_action_log_probs), axis=1)
+        rnn_states = np.concatenate((oppnt_rnn_states, agent_rnn_states), axis=1)
+        rnn_states_critic = agent_rnn_states_critic
 
         return values, actions, action_log_probs, rnn_states, rnn_states_critic
 
@@ -149,10 +194,11 @@ class SMACRunner(Runner):
         obs, rewards, dones, infos, available_actions, \
         values, actions, action_log_probs, rnn_states, rnn_states_critic = data
 
+        agent_rewards = np.expand_dims(rewards[:, -1], 1)
         dones_env = np.all(dones, axis=1)
 
         rnn_states[dones_env == True] = np.zeros(((dones_env == True).sum(), self.num_agents, self.recurrent_N, self.hidden_size), dtype=np.float32)
-        rnn_states_critic[dones_env == True] = np.zeros(((dones_env == True).sum(), self.num_agents, *self.buffer.rnn_states_critic.shape[3:]), dtype=np.float32)
+        rnn_states_critic[dones_env == True] = np.zeros(((dones_env == True).sum(), 1, *self.buffer.rnn_states_critic.shape[3:]), dtype=np.float32)
 
         masks = np.ones((self.n_rollout_threads, self.num_agents, 1), dtype=np.float32)
         masks[dones_env == True] = np.zeros(((dones_env == True).sum(), self.num_agents, 1), dtype=np.float32)
@@ -163,8 +209,19 @@ class SMACRunner(Runner):
 
         bad_masks = np.array([[[0.0] if info[agent_id]['bad_transition'] else [1.0] for agent_id in range(self.num_agents)] for info in infos])
 
-        self.buffer.insert(obs, rnn_states, rnn_states_critic,
-                           actions, action_log_probs, values, rewards, masks, bad_masks, active_masks, available_actions)
+        self.buffer.insert(
+            obs,
+            rnn_states,
+            rnn_states_critic,
+            actions,
+            action_log_probs,
+            values,
+            agent_rewards,
+            masks,
+            bad_masks,
+            active_masks,
+            available_actions
+        )
 
     def log_train(self, train_infos, total_num_steps):
         train_infos["average_step_rewards"] = np.mean(self.buffer.rewards)
@@ -181,40 +238,68 @@ class SMACRunner(Runner):
 
         eval_episode_rewards = []
         one_episode_rewards = []
+        eval_episode_tasks = np.random.choice(self.trainer.opponent_policy.num_policies, self.n_eval_rollout_threads)
 
         eval_obs, _, eval_available_actions = self.eval_envs.reset()
-
-        agent_eval_rnn_states = np.zeros((self.n_eval_rollout_threads, 1, self.recurrent_N, self.hidden_size), dtype=np.float32)
-        agent_eval_masks = np.ones((self.n_eval_rollout_threads, 1, 1), dtype=np.float32)
-        oppnt_eval_rnn_states = np.zeros((self.n_eval_rollout_threads, self.num_agents - 1, self.recurrent_N, self.hidden_size), dtype=np.float32)
-        oppnt_eval_masks = np.ones((self.n_eval_rollout_threads, self.num_agents - 1, 1), dtype=np.float32)
+        agent_eval_actions = np.zeros((self.n_eval_rollout_threads, self.buffer.act_shape))
+        eval_rnn_states = np.zeros((self.n_eval_rollout_threads, self.num_agents, self.recurrent_N, self.hidden_size), dtype=np.float32)
+        eval_masks = np.ones((self.n_eval_rollout_threads, self.num_agents, 1), dtype=np.float32)
 
         step = 0
         while True:
             self.trainer.prep_rollout()
-            agent_eval_actions, agent_eval_rnn_states = \
-                self.trainer.policy.act(
-                    np.concatenate(eval_obs[:, -1]),
-                    np.concatenate(agent_eval_rnn_states),
-                    np.concatenate(agent_eval_masks),
-                    np.concatenate(eval_available_actions[:, -1]),
-                    deterministic=True
+
+            # get opponent actions
+            oppnt_eval_actions, oppnt_eval_rnn_state = self.trainer.opponent_policy.act(
+                eval_obs[:, :-1],
+                eval_rnn_states[:, :-1],
+                eval_masks[:, :-1],
+                eval_available_actions[:, :-1],
+                eval_episode_tasks,
+                deterministic=True
             )
-            oppnt_eval_actions, oppnt_eval_rnn_states = \
-                self.trainer.opponent_policy.act(
-                    np.concatenate(eval_obs[:, :-1]),
-                    np.concatenate(oppnt_eval_rnn_states),
-                    np.concatenate(oppnt_eval_masks),
-                    np.concatenate(eval_available_actions[:, :-1]),
-                    deterministic=True
+
+            oppnt_eval_actions = np.array(np.split(_t2n(oppnt_eval_actions), self.n_eval_rollout_threads))
+            oppnt_eval_rnn_states = np.array(np.split(_t2n(oppnt_eval_rnn_state), self.n_eval_rollout_threads))
+
+            # print("Eval obs shape: ", )
+
+            if self.algorithm_name == 'ppo':
+                x = compute_input(
+                    agent_obs=eval_obs[:, -1],
+                    action_dim=self.envs.action_space[0].n,
+                    batch_dim=self.n_eval_rollout_threads
+                )
+            elif self.algorithm_name == 'nam':
+                x = compute_input(
+                    agent_obs=eval_obs[:, -1],
+                    agent_actions=agent_eval_actions,
+                    action_dim=self.envs.action_space[0].n,
+                    batch_dim=self.n_eval_rollout_threads
+                )
+            elif self.algorithm_name == 'oracle':
+                x = compute_input(
+                    agent_obs=eval_obs[:, -1],
+                    agent_actions=agent_eval_actions,
+                    oppnt_obs=eval_obs[:, :-1],
+                    oppnt_actions=oppnt_eval_actions,
+                    action_dim=self.envs.action_space[0].n,
+                    batch_dim=self.n_eval_rollout_threads
+                )
+
+            agent_eval_actions, agent_eval_rnn_state = self.trainer.policy.act(
+                x,
+                np.concatenate(np.expand_dims(eval_rnn_states[:, -1], 1)),
+                np.concatenate(np.expand_dims(eval_masks[:, -1], 1)),
+                np.concatenate(np.expand_dims(eval_available_actions[:, -1], 1)),
+                deterministic=True
             )
 
             agent_eval_actions = np.array(np.split(_t2n(agent_eval_actions), self.n_eval_rollout_threads))
-            oppnt_eval_actions = np.array(np.split(_t2n(oppnt_eval_actions), self.n_eval_rollout_threads))
-            agent_eval_rnn_states = np.array(np.split(_t2n(agent_eval_rnn_states), self.n_eval_rollout_threads))
-            oppnt_eval_rnn_states = np.array(np.split(_t2n(oppnt_eval_rnn_states), self.n_eval_rollout_threads))
+            agent_eval_rnn_states = np.array(np.split(_t2n(agent_eval_rnn_state), self.n_eval_rollout_threads))
 
-            eval_actions = np.concatenate((oppnt_eval_actions, agent_eval_actions), axis=-1)
+            eval_actions = np.concatenate((oppnt_eval_actions, agent_eval_actions), axis=1)
+            eval_rnn_states = np.concatenate((oppnt_eval_rnn_states, agent_eval_rnn_states), axis=1)
 
             step += 1
 
@@ -222,30 +307,23 @@ class SMACRunner(Runner):
             eval_obs, _, eval_rewards, eval_dones, eval_infos, eval_available_actions = self.eval_envs.step(eval_actions)
             one_episode_rewards.append(eval_rewards)
 
-            agent_eval_dones = eval_dones[:, -1]
-            oppnt_eval_dones = eval_dones[:, :-1]
-
             eval_dones_env = np.all(eval_dones, axis=1)
-            agent_eval_dones_env = np.all(agent_eval_dones, axis=1)
-            oppnt_eval_dones_env = np.all(oppnt_eval_dones, axis=1)
 
-            agent_eval_rnn_states[agent_eval_dones_env == True] = np.zeros(((agent_eval_dones_env == True).sum(), 1, self.recurrent_N, self.hidden_size), dtype=np.float32)
-            oppnt_eval_rnn_states[oppnt_eval_dones_env == True] = np.zeros(((oppnt_eval_dones_env == True).sum(), self.num_agents - 1, self.recurrent_N, self.hidden_size), dtype=np.float32)
+            eval_rnn_states[eval_dones_env == True] = np.zeros(((eval_dones_env == True).sum(), self.num_agents, self.recurrent_N, self.hidden_size), dtype=np.float32)
 
-            agent_eval_masks = np.ones((self.all_args.n_eval_rollout_threads, 1, 1), dtype=np.float32)
-            agent_eval_masks[agent_eval_dones_env == True] = np.zeros(((agent_eval_dones_env == True).sum(), 1, 1), dtype=np.float32)
-            oppnt_eval_masks = np.ones((self.all_args.n_eval_rollout_threads, self.num_agents - 1, 1), dtype=np.float32)
-            oppnt_eval_masks[oppnt_eval_dones_env == True] = np.zeros(((oppnt_eval_dones_env == True).sum(), self.num_agents - 1, 1), dtype=np.float32)
+            eval_masks = np.ones((self.agent_args.n_eval_rollout_threads, self.num_agents, 1), dtype=np.float32)
+            eval_masks[eval_dones_env == True] = np.zeros(((eval_dones_env == True).sum(), self.num_agents, 1), dtype=np.float32)
 
             for eval_i in range(self.n_eval_rollout_threads):
                 if eval_dones_env[eval_i]:
                     eval_episode += 1
                     eval_episode_rewards.append(np.sum(one_episode_rewards, axis=0))
                     one_episode_rewards = []
+                    eval_episode_tasks[eval_i] = np.random.choice(self.trainer.opponent_policy.num_policies, 1)
                     if eval_infos[eval_i][0]['won']:
                         eval_battles_won += 1
 
-            if eval_episode >= self.all_args.eval_episodes:
+            if eval_episode >= self.agent_args.eval_episodes:
                 eval_episode_rewards = np.array(eval_episode_rewards)
                 eval_env_infos = {'eval_average_episode_rewards': eval_episode_rewards}                
                 self.log_env(eval_env_infos, total_num_steps)

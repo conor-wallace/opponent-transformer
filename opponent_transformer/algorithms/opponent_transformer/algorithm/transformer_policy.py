@@ -1,3 +1,5 @@
+import os
+import glob
 import torch
 from opponent_transformer.algorithms.opponent_transformer.algorithm.actor_critic import Actor, Critic
 from opponent_transformer.utils.util import update_linear_schedule
@@ -14,18 +16,21 @@ class OpponentTransformerPolicy:
     :param device: (torch.device) specifies the device to run on (cpu/gpu).
     """
 
-    def __init__(self, args, obs_space, act_space, device=torch.device("cpu")):
+    def __init__(self, args, obs_space, act_space, device=torch.device("cpu"), embedding_size=None):
+        print("Using device ", device)
         self.device = device
         self.lr = args.lr
         self.critic_lr = args.critic_lr
         self.opti_eps = args.opti_eps
         self.weight_decay = args.weight_decay
+        self.algorithm_name = args.algorithm_name
 
         self.obs_space = obs_space
         self.act_space = act_space
 
-        self.actor = Actor(args, self.obs_space, self.act_space, self.device)
-        self.critic = Critic(args, self.obs_space, self.device)
+        print("Loading agent policy")
+        self.actor = Actor(args, self.obs_space, self.act_space, self.device, embedding_size)
+        self.critic = Critic(args, self.obs_space, self.device, embedding_size)
 
         self.actor_optimizer = torch.optim.Adam(
             self.actor.parameters(),
@@ -39,6 +44,13 @@ class OpponentTransformerPolicy:
             eps=self.opti_eps,
             weight_decay=self.weight_decay
         )
+
+        # self.model_dir = args.opponent_dir
+        # policy_weights = sorted(glob.glob(os.path.join(self.model_dir, "*")))
+        # self.num_policies = len(policy_weights)
+
+        # policy_state_dict = torch.load(policy_weights[0])
+        # self.actor.load_state_dict(policy_state_dict)
 
     def lr_decay(self, episode, episodes):
         """
